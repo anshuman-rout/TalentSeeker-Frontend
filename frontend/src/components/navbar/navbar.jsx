@@ -47,7 +47,7 @@ const Navbar = ({onLogout}) => {
       {/* Title */}
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">
-          Resume Query
+          Talent Seek
         </h1>
 
         <FaChevronDown className="text-sm text-gray-400" />

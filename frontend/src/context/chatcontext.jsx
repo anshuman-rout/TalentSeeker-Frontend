@@ -142,9 +142,12 @@ const createNewChat = () => {
 
         sender: "ai",
         text:
-          data.reason_for_search,
+          data.matching_candidates
+           ?.length > 0
+            ? data.reason_for_search
+            : "No Results Found",
         candidates:
-          data.matching_candidates,
+          data.matching_candidates || [],
       };
 
     // Append AI Response
