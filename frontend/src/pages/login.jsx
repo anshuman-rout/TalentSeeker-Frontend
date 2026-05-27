@@ -92,7 +92,7 @@ const Login = ({ onLogin }) => {
         <div className="mb-10 text-center">
           
           <h1 className="text-4xl font-bold text-white mb-3">
-            Resume Query
+            Talent Seek
           </h1>
 
           <p className="text-gray-400">
