@@ -12,3 +12,9 @@ export const deleteContext = async (contextId) => {
   const response = await API.delete(`/api/v1/delete/contexts/${contextId}`);
   return response.data;
 };
+
+// COMPARE /api/v1/search/compare
+export const compareCandidates = async ({context_id,candidate_paths,}) => {
+    const response = await API.post("/api/v1/search/compare",{context_id,candidate_paths,});
+    return response.data;
+};

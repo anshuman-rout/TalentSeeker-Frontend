@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 
 import { loginUser } from "../services/authService";
+import { useAuthStore } from "../context/AuthStore"
+const Login = () => {
 
-const Login = ({ onLogin }) => {
-
+  const {handleLogin} = useAuthStore()
   const [formData, setFormData] =
     useState({
       username: "",
@@ -53,19 +54,19 @@ const Login = ({ onLogin }) => {
 
       console.log(data);
 
-      // Save Tokens
-      localStorage.setItem(
-        "access_token",
-        data.access_token
-      );
+      // // Save Tokens
+      // localStorage.setItem(
+      //   "access_token",
+      //   data.access_token
+      // );
 
-      localStorage.setItem(
-        "refresh_token",
-        data.refresh_token
-      );
+      // localStorage.setItem(
+      //   "refresh_token",
+      //   data.refresh_token
+      // );
 
       // Login Success
-      onLogin();
+      await handleLogin(data);
 
     } catch (error) {
 

@@ -1,65 +1,74 @@
-import React, {useEffect,useState,} from "react";
-import {UploadProvider,} from "./context/UploadContext";
+import React, { useEffect, useState, } from "react";
+import { UploadProvider, } from "./context/UploadContext";
+import { BrowserRouter, Routes, Route } from "react-router";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
-
+import { ProtectedRoute } from "./Providers/ProtectRoute"
+import { AuthProvider } from "./context/AuthStore";
 import { ChatProvider } from "./context/ChatContext";
 const App = () => {
 
-  const [isLoggedIn, setIsLoggedIn] =
-    useState(false);
 
-  // Check Existing Token
-  useEffect(() => {
+  // const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-    const token =
-      localStorage.getItem(
-        "access_token"
-      );
+  // // Check Existing Token
+  // useEffect(() => {
 
-    if (token) {
-      setIsLoggedIn(true);
-    }
+  //   const token =
+  //     localStorage.getItem(
+  //       "access_token"
+  //     );
 
-  }, []);
+  //   if (token) {
+  //     setIsLoggedIn(true);
+  //   }
+
+  // }, []);
 
   // Login
   const handleLogin = () => {
     setIsLoggedIn(true);
   };
 
-  // Logout
-  const handleLogout = () => {
+  // // Logout
+  // const handleLogout = () => {
 
-    // Remove Tokens
-    localStorage.removeItem(
-      "access_token"
-    );
+  //   // Remove Tokens
+  //   localStorage.removeItem(
+  //     "access_token"
+  //   );
 
-    localStorage.removeItem(
-      "refresh_token"
-    );
+  //   localStorage.removeItem(
+  //     "refresh_token"
+  //   );
 
-    // Logout User
-    setIsLoggedIn(false);
-};
+  //   // Logout User
+  //   setIsLoggedIn(false);
+  // };
+
+
 
   return (
-    <UploadProvider>
-      <ChatProvider>
+    <Routes>
 
-        {isLoggedIn ? (
+      <Route path="/" element={
+        <AuthProvider>
+           <UploadProvider>
+            <ChatProvider>
+              <Home />
+            </ChatProvider>
+           </UploadProvider>
+        </AuthProvider>
+        
+      } />
+      <Route path="/login" element={
+        <AuthProvider>
+            <Login  />
+        </AuthProvider>
+        } />
+    </Routes>
 
-          <Home onLogout={handleLogout} />
 
-        ) : (
-
-          <Login onLogin={handleLogin} />
-
-        )}
-
-      </ChatProvider>
-    </UploadProvider>
   );
 };
 

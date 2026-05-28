@@ -5,11 +5,12 @@ import Sidebar     from "../components/Sidebar/Sidebar";
 import Navbar      from "../components/Navbar/Navbar";
 import ChatWindow  from "../components/Chat/ChatWindow";
 import ChatInput   from "../components/Chat/ChatInput";
-
+import { useAuthStore } from "../context/AuthStore"
 import { useChat } from "../context/ChatContext";
 
 const Home = ({ onLogout }) => {
 
+  const {handleLogout} = useAuthStore()
   const {
     chats,
     currentChat,
@@ -38,7 +39,7 @@ const Home = ({ onLogout }) => {
       <div className="flex flex-col flex-1 bg-[#121212] h-screen overflow-hidden">
 
         {/* Navbar */}
-        <Navbar onLogout={onLogout} />
+        <Navbar onLogout={handleLogout} />
 
         {/* Chat section — fills remaining height */}
         <div className="flex flex-col flex-1 overflow-hidden">
