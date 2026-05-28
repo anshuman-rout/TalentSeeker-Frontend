@@ -1,63 +1,68 @@
 import React from "react";
-import UploadBox from "../components/common/UploadBox";
-import Sidebar from "../components/Sidebar/Sidebar";
-import Navbar from "../components/Navbar/Navbar";
-import ChatWindow from "../components/Chat/ChatWindow";
-import ChatInput from "../components/Chat/ChatInput";
+
+import UploadBox   from "../components/common/UploadBox";
+import Sidebar     from "../components/Sidebar/Sidebar";
+import Navbar      from "../components/Navbar/Navbar";
+import ChatWindow  from "../components/Chat/ChatWindow";
+import ChatInput   from "../components/Chat/ChatInput";
 
 import { useChat } from "../context/ChatContext";
 
-const Home = ({onLogout}) => {
+const Home = ({ onLogout }) => {
+
   const {
     chats,
     currentChat,
     currentChatId,
-
-    setCurrentChatId,
-
+    loading,
+    selectChat,
     createNewChat,
     deleteChat,
-
     sendMessage,
     clearChat,
   } = useChat();
 
   return (
     <div className="flex h-screen bg-black text-white">
-      
+
       {/* Sidebar */}
       <Sidebar
         chats={chats}
         currentChatId={currentChatId}
-        setCurrentChatId={setCurrentChatId}
+        selectChat={selectChat}
         createNewChat={createNewChat}
         deleteChat={deleteChat}
       />
 
-      {/* Main Area */}
-      <div className="flex flex-col flex-1 bg-[#121212] h-screen">
-        
-        {/* Navbar */}
-        <Navbar onLogout={onLogout}/>
+      {/* Main area */}
+      <div className="flex flex-col flex-1 bg-[#121212] h-screen overflow-hidden">
 
-        {/* Chat Section */}
+        {/* Navbar */}
+        <Navbar onLogout={onLogout} />
+
+        {/* Chat section — fills remaining height */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          
+
+          {/* Message window — scrollable */}
           <ChatWindow
             currentChat={currentChat}
             messages={currentChat?.messages || []}
           />
 
-          {currentChat && (
-           <ChatInput
-              sendMessage={sendMessage}
-              clearChat={clearChat}
-              currentChatId={currentChatId}
-            />
-          )}
-          <UploadBox />
+          {/* Input — always visible so users can start a new chat */}
+          <ChatInput
+            sendMessage={sendMessage}
+            clearChat={clearChat}
+            currentChatId={currentChatId}
+            loading={loading}
+          />
+
         </div>
       </div>
+
+      {/* CV upload overlay */}
+      <UploadBox />
+
     </div>
   );
 };

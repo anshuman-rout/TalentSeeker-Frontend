@@ -5,7 +5,7 @@ import { FaPlus } from "react-icons/fa";
 const Sidebar = ({
   chats,
   currentChatId,
-  setCurrentChatId,
+  selectChat,
   createNewChat,
   deleteChat,
 }) => {
@@ -34,7 +34,7 @@ const Sidebar = ({
             key={chat.id}
             chat={chat}
             active={currentChatId === chat.id}
-            onClick={() => setCurrentChatId(chat.id)}
+            onClick={() => selectChat(chat)}
             onDelete={() => deleteChat(chat.id)}
           />
         ))}

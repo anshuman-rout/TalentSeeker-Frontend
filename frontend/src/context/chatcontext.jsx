@@ -1,198 +1,194 @@
-import React, { createContext, useContext, useEffect, useState,} from "react";
-import { searchCandidates }
-from "../services/searchService";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+
+import { searchCandidates } from "../services/searchService";
+import { getAllContexts, deleteContext } from "../services/contextService";
 
 const ChatContext = createContext();
 
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+// GET /api/v1/search/contexts response shape:
+// {
+//   "search-123": [{ query, response: { reason_for_search, matching_candidates: [...] } }],
+//   "search-456": [...],
+// }
+// Keys are context_ids, values are arrays of history items.
+
+const buildMessages = (historyItems = []) =>
+  historyItems.flatMap((item) => [
+    {
+      sender: "user",
+      text: item.query,
+    },
+    {
+      sender: "ai",
+      text: item.response.reason_for_search,
+      candidates: item.response.matching_candidates || [],
+    },
+  ]);
+
+const buildChats = (contextsObj = {}) =>
+  Object.entries(contextsObj)
+    .filter(([, items]) => Array.isArray(items) && items.length > 0)
+    .map(([contextId, items]) => ({
+      id: `backend-${contextId}`,
+      context_id: contextId,
+      // Use the last query in this context as the sidebar title
+      title: items[items.length - 1]?.query || contextId,
+      messages: buildMessages(items),
+    }))
+    .slice(-15)
+    .reverse();
+
+// ─── provider ───────────────────────────────────────────────────────────────
+
 export const ChatProvider = ({ children }) => {
-  
-  // All Chats
-  const [chats, setChats] = useState(() => {
-    const savedChats =
-      localStorage.getItem("chat-app");
 
-    return savedChats
-      ? JSON.parse(savedChats)
-      : [];
-  });
+  const [chats, setChats] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  // Current Chat
-  const [currentChatId, setCurrentChatId] =
-    useState(null);
+  // ── fetch all chats ───────────────────────────────────────────────────────
+  // Single call to GET /api/v1/search/contexts — returns everything.
+  // Returns built chats so sendMessage can use them immediately.
 
-  // Save Chats in LocalStorage
+  const fetchChats = async () => {
+    try {
+      const data = await getAllContexts();
+      // data is a plain object: { "search-123": [...], ... }
+      const validChats = buildChats(data);
+      setChats(validChats);
+      return validChats;
+    } catch (error) {
+      console.error("fetchChats error:", error);
+      return [];
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem(
-      "chat-app",
-      JSON.stringify(chats)
-    );
-  }, [chats]);
+    fetchChats();
+  }, []);
 
-  // Current Selected Chat
-  const currentChat = chats.find(
-    (chat) => chat.id === currentChatId
-  );
+  // ── derived ───────────────────────────────────────────────────────────────
 
-  // Create Chat
-const createNewChat = () => {
-  // Find existing empty chat
-  const emptyChat = chats.find(
-    (chat) => chat.messages.length === 0
-  );
+  const currentChat = chats.find((c) => c.id === currentChatId) || null;
 
-  // If empty chat already exists
-  if (emptyChat) {
-    setCurrentChatId(emptyChat.id);
-    return;
-  }
+  // ── create new chat ───────────────────────────────────────────────────────
 
-  // Create new chat only if no empty chat exists
-  const newChat = {
-    id: Date.now(),
-    title: "New Chat",
-    context_id: `search-${Date.now()}`,
-    messages: [],
-  };
+  const createNewChat = () => setCurrentChatId(null);
 
-  setChats((prev) => [newChat, ...prev]);
+  // ── select chat ───────────────────────────────────────────────────────────
+  // Messages already loaded in state — just switch selection.
 
-  setCurrentChatId(newChat.id);
-};
+  const selectChat = (chat) => setCurrentChatId(chat.id);
 
-  // Delete Chat
-  const deleteChat = (id) => {
-    const filteredChats = chats.filter(
-      (chat) => chat.id !== id
-    );
+  // ── delete chat ───────────────────────────────────────────────────────────
+  // DELETE /api/v1/delete/contexts/{context_id}
 
-    setChats(filteredChats);
-
-    if (filteredChats.length > 0) {
-      setCurrentChatId(filteredChats[0].id);
-    }
-  };
-
-  // Send Message
-  const sendMessage = async (text) => {
-
-    // Query Limit
-    const currentChat = chats.find(
-      (chat) => chat.id === currentChatId
-    );
-    const userMessages =
-      currentChat.messages.filter(
-        (msg) => msg.sender === "user"
-      );
-    if (userMessages.length >= 12) {
-      alert(
-        "Maximum query limit reached"
-      );
-      return;
-    }
-
-    // Add User Message First
-    const updatedChats = chats.map(
-      (chat) => {
-
-        if (chat.id === currentChatId) {
-
-          return {
-
-            ...chat,
-
-            title:
-              chat.messages.length === 0
-                ? text.slice(0, 25)
-                : chat.title,
-
-            messages: [
-              ...chat.messages,
-              {
-                sender: "user",
-                text,
-              },
-            ],
-          };
-        }
-
-        return chat;
-      }
-    );
-
-    setChats(updatedChats);
+  const deleteChat = async (id) => {
+    const chat = chats.find((c) => c.id === id);
+    if (!chat) return;
 
     try {
+      await deleteContext(chat.context_id);
+    } catch (error) {
+      console.error("deleteContext error:", error);
+    }
 
-      // Search API Call
-      const data =
-        await searchCandidates({
+    const remaining = chats.filter((c) => c.id !== id);
+    setChats(remaining);
+    setCurrentChatId(remaining.length > 0 ? remaining[0].id : null);
+  };
 
-          query: text,
+  // ── send message ──────────────────────────────────────────────────────────
+  // POST /api/v1/search  →  re-fetch GET /api/v1/search/contexts
 
-          context_id:
-            currentChat.context_id,
+  const sendMessage = async (text) => {
+    if (!text.trim()) return;
 
-          reset_context: false,
-        });
+    const activeContextId =
+      currentChat?.context_id || `search-${Date.now()}`;
 
-      console.log(data);
+    setLoading(true);
 
-    // AI Response Message
-      const aiMessage = {
+    // Optimistic user bubble so the UI feels instant
+    const tempUserMsg = { sender: "user", text };
+    const tempAiMsg   = { sender: "ai", text: "Searching…", candidates: [] };
 
-        sender: "ai",
-        text:
-          data.matching_candidates
-           ?.length > 0
-            ? data.reason_for_search
-            : "No Results Found",
-        candidates:
-          data.matching_candidates || [],
-      };
+    setChats((prev) => {
+      const exists = prev.find((c) => c.context_id === activeContextId);
+      if (exists) {
+        return prev.map((c) =>
+          c.context_id === activeContextId
+            ? { ...c, messages: [...c.messages, tempUserMsg, tempAiMsg] }
+            : c
+        );
+      }
+      // Brand new chat — add a placeholder so the window switches immediately
+      return [
+        {
+          id: `backend-${activeContextId}`,
+          context_id: activeContextId,
+          title: text,
+          messages: [tempUserMsg, tempAiMsg],
+        },
+        ...prev,
+      ];
+    });
 
-    // Append AI Response
-      const finalChats =
-        updatedChats.map((chat) => {
-          if (
-            chat.id === currentChatId
-          ) {
-            return {
-              ...chat,
-              messages: [
-                ...chat.messages,
-                aiMessage,
-              ],
-            };
-          }
+    // Switch to it right away so the user sees the optimistic messages
+    setCurrentChatId(`backend-${activeContextId}`);
 
-          return chat;
-        });
+    try {
+      // POST /api/v1/search
+      await searchCandidates({
+        query: text,
+        context_id: activeContextId,
+        reset_context: false,
+      });
 
-      setChats(finalChats);
+      // Replace optimistic messages with real data from backend
+      const freshChats = await fetchChats();
+      const activeChat = freshChats.find(
+        (c) => c.context_id === activeContextId
+      );
+      if (activeChat) setCurrentChatId(activeChat.id);
 
     } catch (error) {
+      console.error("sendMessage error:", error);
 
-      console.log(error);
+      // Roll back optimistic messages
+      setChats((prev) =>
+        prev
+          .map((c) =>
+            c.context_id === activeContextId
+              ? {
+                  ...c,
+                  messages: c.messages.filter(
+                    (m) => m !== tempUserMsg && m !== tempAiMsg
+                  ),
+                }
+              : c
+          )
+          .filter((c) => c.messages.length > 0)
+      );
 
-      alert("Search Failed");
+      alert("Search failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Clear Current Chat
-  const clearChat = () => {
-    const updatedChats = chats.map((chat) => {
-      if (chat.id === currentChatId) {
-        return {
-          ...chat,
-          messages: [],
-        };
-      }
+  // ── clear view ────────────────────────────────────────────────────────────
 
-      return chat;
-    });
+  const clearChat = () => setCurrentChatId(null);
 
-    setChats(updatedChats);
-  };
+  // ── provider ──────────────────────────────────────────────────────────────
 
   return (
     <ChatContext.Provider
@@ -200,9 +196,8 @@ const createNewChat = () => {
         chats,
         currentChat,
         currentChatId,
-
-        setCurrentChatId,
-
+        loading,
+        selectChat,
         createNewChat,
         deleteChat,
         sendMessage,
@@ -214,6 +209,4 @@ const createNewChat = () => {
   );
 };
 
-// Custom Hook
-export const useChat = () =>
-  useContext(ChatContext);
+export const useChat = () => useContext(ChatContext);
