@@ -6,117 +6,192 @@ import React, {
 } from "react";
 
 import { searchCandidates } from "../services/searchService";
-import { getAllContexts, deleteContext } from "../services/contextService";
+import { getAllContexts, deleteContext, compareCandidates } from "../services/contextService";
 
 const ChatContext = createContext();
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-// GET /api/v1/search/contexts response shape:
-// {
-//   "search-123": [{ query, response: { reason_for_search, matching_candidates: [...] } }],
-//   "search-456": [...],
-// }
-// Keys are context_ids, values are arrays of history items.
+// Detect whether a history item is a compare result or a regular search.
+// Compare items have query starting with "Shortlisted comparison:" and
+// response.candidates (array of objects with skills/experience/etc.)
+const isCompareItem = (item) =>
+  item.query?.startsWith("Shortlisted comparison:") &&
+  Array.isArray(item.response?.candidates);
 
 const buildMessages = (historyItems = []) =>
-  historyItems.flatMap((item) => [
-    {
-      sender: "user",
-      text: item.query,
-    },
-    {
-      sender: "ai",
-      text: item.response.reason_for_search,
-      candidates: item.response.matching_candidates || [],
-    },
-  ]);
+  historyItems.map((item) => {
+    if (isCompareItem(item)) {
+      // Compare message — sender "compare", carries the full result object
+      return {
+        sender: "compare",
+        compareResult: item.response,
+      };
+    }
+    // Regular search message — split into user + ai pair
+    return [
+      { sender: "user", text: item.query },
+      {
+        sender: "ai",
+        text: item.response.reason_for_search,
+        candidates: item.response.matching_candidates || [],
+      },
+    ];
+  }).flat();
 
 const buildChats = (contextsObj = {}) =>
   Object.entries(contextsObj)
     .filter(([, items]) => Array.isArray(items) && items.length > 0)
-    .map(([contextId, items]) => ({
-      id: `backend-${contextId}`,
-      context_id: contextId,
-      // Use the last query in this context as the sidebar title
-      title: items[items.length - 1]?.query || contextId,
-      messages: buildMessages(items),
-    }))
+    .map(([contextId, items]) => {
+      // Use the first search query as the sidebar title, not the last item
+      // (which could be "Shortlisted comparison: ..." and looks ugly)
+      const firstSearchItem = items.find((i) => !isCompareItem(i));
+      return {
+        id: `backend-${contextId}`,
+        context_id: contextId,
+        title: firstSearchItem?.query || contextId,
+        messages: buildMessages(items),
+      };
+    })
     .slice(-15)
     .reverse();
 
-// ─── provider ───────────────────────────────────────────────────────────────
+// ─── provider ─────────────────────────────────────────────────────────────────
 
 export const ChatProvider = ({ children }) => {
 
-  const [chats, setChats] = useState([]);
+  const [chats, setChats]                 = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]             = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState([]);
+  const [comparing, setComparing]         = useState(false);
 
-  // ── fetch all chats ───────────────────────────────────────────────────────
-  // Single call to GET /api/v1/search/contexts — returns everything.
-  // Returns built chats so sendMessage can use them immediately.
+  // ── fetch ─────────────────────────────────────────────────────────────────
+  // GET /api/v1/search/contexts — returns both search and compare history
 
   const fetchChats = async () => {
     try {
       const data = await getAllContexts();
-      // data is a plain object: { "search-123": [...], ... }
       const validChats = buildChats(data);
       setChats(validChats);
       return validChats;
-    } catch (error) {
-      console.error("fetchChats error:", error);
+    } catch (err) {
+      console.error("fetchChats error:", err);
       return [];
     }
   };
 
-  useEffect(() => {
-    fetchChats();
-  }, []);
+  useEffect(() => { fetchChats(); }, []);
 
   // ── derived ───────────────────────────────────────────────────────────────
 
   const currentChat = chats.find((c) => c.id === currentChatId) || null;
 
-  // ── create new chat ───────────────────────────────────────────────────────
+  // Compare messages already live inside currentChat.messages as
+  // { sender: "compare", compareResult: {...} } entries — no separate state needed.
 
-  const createNewChat = () => setCurrentChatId(null);
+  // ── chat navigation ───────────────────────────────────────────────────────
 
-  // ── select chat ───────────────────────────────────────────────────────────
-  // Messages already loaded in state — just switch selection.
+  const createNewChat = () => {
+    setCurrentChatId(null);
+    setSelectedPaths([]);
+  };
 
-  const selectChat = (chat) => setCurrentChatId(chat.id);
+  const selectChat = (chat) => {
+    setCurrentChatId(chat.id);
+    setSelectedPaths([]);
+  };
+
+  const clearChat = () => {
+    setCurrentChatId(null);
+    setSelectedPaths([]);
+  };
 
   // ── delete chat ───────────────────────────────────────────────────────────
-  // DELETE /api/v1/delete/contexts/{context_id}
 
   const deleteChat = async (id) => {
     const chat = chats.find((c) => c.id === id);
     if (!chat) return;
 
-    try {
-      await deleteContext(chat.context_id);
-    } catch (error) {
-      console.error("deleteContext error:", error);
-    }
+    try { await deleteContext(chat.context_id); }
+    catch (err) { console.error("deleteContext error:", err); }
 
     const remaining = chats.filter((c) => c.id !== id);
     setChats(remaining);
     setCurrentChatId(remaining.length > 0 ? remaining[0].id : null);
+    setSelectedPaths([]);
+  };
+
+  // ── candidate selection ───────────────────────────────────────────────────
+
+  const toggleCandidate = (path) => {
+    setSelectedPaths((prev) => {
+      if (prev.includes(path)) return prev.filter((p) => p !== path);
+      if (prev.length >= 5) return prev;
+      return [...prev, path];
+    });
+  };
+
+  const clearSelection = () => setSelectedPaths([]);
+
+  // ── compare ───────────────────────────────────────────────────────────────
+  // POST /api/v1/search/compare
+  // After a successful compare, re-fetch contexts — the backend now includes
+  // the compare result as a new history item inside the same context.
+
+  const compareSelected = async () => {
+    if (!currentChat || selectedPaths.length < 2) return;
+
+    setComparing(true);
+
+    // Optimistic compare bubble while waiting for backend
+    const tempMsg = { sender: "compare", compareResult: null };
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === currentChat.id
+          ? { ...c, messages: [...c.messages, tempMsg] }
+          : c
+      )
+    );
+
+    try {
+      await compareCandidates({
+        context_id: currentChat.context_id,
+        candidate_paths: selectedPaths,
+      });
+
+      // Re-fetch — backend now has the compare result in context history
+      const freshChats = await fetchChats();
+      const activeChat = freshChats.find((c) => c.context_id === currentChat.context_id);
+      if (activeChat) setCurrentChatId(activeChat.id);
+
+      setSelectedPaths([]);
+
+    } catch (err) {
+      console.error("compare error:", err);
+      // Remove optimistic bubble on failure
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === currentChat.id
+            ? { ...c, messages: c.messages.filter((m) => m !== tempMsg) }
+            : c
+        )
+      );
+      alert("Comparison failed. Please try again.");
+    } finally {
+      setComparing(false);
+    }
   };
 
   // ── send message ──────────────────────────────────────────────────────────
-  // POST /api/v1/search  →  re-fetch GET /api/v1/search/contexts
 
   const sendMessage = async (text) => {
     if (!text.trim()) return;
 
-    const activeContextId =
-      currentChat?.context_id || `search-${Date.now()}`;
-
+    const activeContextId = currentChat?.context_id || `search-${Date.now()}`;
     setLoading(true);
+    setSelectedPaths([]);
 
-    // Optimistic user bubble so the UI feels instant
     const tempUserMsg = { sender: "user", text };
     const tempAiMsg   = { sender: "ai", text: "Searching…", candidates: [] };
 
@@ -129,7 +204,6 @@ export const ChatProvider = ({ children }) => {
             : c
         );
       }
-      // Brand new chat — add a placeholder so the window switches immediately
       return [
         {
           id: `backend-${activeContextId}`,
@@ -141,52 +215,35 @@ export const ChatProvider = ({ children }) => {
       ];
     });
 
-    // Switch to it right away so the user sees the optimistic messages
     setCurrentChatId(`backend-${activeContextId}`);
 
     try {
-      // POST /api/v1/search
       await searchCandidates({
         query: text,
         context_id: activeContextId,
         reset_context: false,
       });
 
-      // Replace optimistic messages with real data from backend
       const freshChats = await fetchChats();
-      const activeChat = freshChats.find(
-        (c) => c.context_id === activeContextId
-      );
+      const activeChat = freshChats.find((c) => c.context_id === activeContextId);
       if (activeChat) setCurrentChatId(activeChat.id);
 
-    } catch (error) {
-      console.error("sendMessage error:", error);
-
-      // Roll back optimistic messages
+    } catch (err) {
+      console.error("sendMessage error:", err);
       setChats((prev) =>
         prev
           .map((c) =>
             c.context_id === activeContextId
-              ? {
-                  ...c,
-                  messages: c.messages.filter(
-                    (m) => m !== tempUserMsg && m !== tempAiMsg
-                  ),
-                }
+              ? { ...c, messages: c.messages.filter((m) => m !== tempUserMsg && m !== tempAiMsg) }
               : c
           )
           .filter((c) => c.messages.length > 0)
       );
-
       alert("Search failed. Please try again.");
     } finally {
       setLoading(false);
     }
   };
-
-  // ── clear view ────────────────────────────────────────────────────────────
-
-  const clearChat = () => setCurrentChatId(null);
 
   // ── provider ──────────────────────────────────────────────────────────────
 
@@ -202,6 +259,11 @@ export const ChatProvider = ({ children }) => {
         deleteChat,
         sendMessage,
         clearChat,
+        selectedPaths,
+        toggleCandidate,
+        clearSelection,
+        compareSelected,
+        comparing,
       }}
     >
       {children}
