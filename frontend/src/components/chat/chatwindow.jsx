@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { useChat } from "../../context/ChatContext";
 
-const BASE_URL = "http://192.168.7.12:8001";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 // ─── Tag Pill ─────────────────────────────────────────────────────────────────
 // Used to render each item in skills / experience / education / projects arrays.

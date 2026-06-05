@@ -43,28 +43,33 @@ const buildChats = (contextsObj = {}) =>
   Object.entries(contextsObj)
     .filter(([, items]) => Array.isArray(items) && items.length > 0)
     .map(([contextId, items]) => {
-      // Use the first search query as the sidebar title, not the last item
-      // (which could be "Shortlisted comparison: ..." and looks ugly)
-      const firstSearchItem = items.find((i) => !isCompareItem(i));
+
+      const firstSearchItem =
+        items.find((i) => !isCompareItem(i));
+
       return {
         id: `backend-${contextId}`,
         context_id: contextId,
         title: firstSearchItem?.query || contextId,
         messages: buildMessages(items),
+        updated_at:
+          items[items.length - 1]?.created_at ||
+          items[items.length - 1]?.updated_at ||
+          "",
       };
     })
-    .slice(-15)
-    .reverse();
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+    .slice(0, 15);
 
 // ─── provider ─────────────────────────────────────────────────────────────────
 
 export const ChatProvider = ({ children }) => {
 
-  const [chats, setChats]                 = useState([]);
+  const [chats, setChats] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
-  const [loading, setLoading]             = useState(false);
+  const [loading, setLoading] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState([]);
-  const [comparing, setComparing]         = useState(false);
+  const [comparing, setComparing] = useState(false);
 
   // ── fetch ─────────────────────────────────────────────────────────────────
   // GET /api/v1/search/contexts — returns both search and compare history
@@ -74,6 +79,18 @@ export const ChatProvider = ({ children }) => {
       const data = await getAllContexts();
       const validChats = buildChats(data);
       setChats(validChats);
+      const savedChatId = localStorage.getItem("active_chat_id");
+      if (savedChatId === "__NEW_CHAT__") 
+      {
+        setCurrentChatId(null);
+        return validChats;
+      }
+      const exists = validChats.find((chat) => chat.id === savedChatId);
+      if (exists) {
+        setCurrentChatId(savedChatId);
+      } else if (validChats.length > 0) {
+        setCurrentChatId(validChats[0].id);
+      }
       return validChats;
     } catch (err) {
       console.error("fetchChats error:", err);
@@ -94,11 +111,13 @@ export const ChatProvider = ({ children }) => {
 
   const createNewChat = () => {
     setCurrentChatId(null);
+    localStorage.setItem("active_chat_id", "__NEW_CHAT__");
     setSelectedPaths([]);
   };
 
   const selectChat = (chat) => {
     setCurrentChatId(chat.id);
+    localStorage.setItem("active_chat_id", chat.id);
     setSelectedPaths([]);
   };
 
@@ -193,7 +212,7 @@ export const ChatProvider = ({ children }) => {
     setSelectedPaths([]);
 
     const tempUserMsg = { sender: "user", text };
-    const tempAiMsg   = { sender: "ai", text: "Searching…", candidates: [] };
+    const tempAiMsg = { sender: "ai", text: "Searching…", candidates: [] };
 
     setChats((prev) => {
       const exists = prev.find((c) => c.context_id === activeContextId);
@@ -216,6 +235,7 @@ export const ChatProvider = ({ children }) => {
     });
 
     setCurrentChatId(`backend-${activeContextId}`);
+    localStorage.setItem("active_chat_id", `backend-${activeContextId}`);
 
     try {
       await searchCandidates({

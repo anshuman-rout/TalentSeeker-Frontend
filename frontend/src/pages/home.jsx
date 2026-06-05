@@ -1,10 +1,10 @@
 import React from "react";
 
 import UploadBox   from "../components/common/UploadBox";
-import Sidebar     from "../components/Sidebar/Sidebar";
-import Navbar      from "../components/Navbar/Navbar";
-import ChatWindow  from "../components/Chat/ChatWindow";
-import ChatInput   from "../components/Chat/ChatInput";
+import Sidebar     from "../components/sidebar/sidebar";
+import Navbar      from "../components/navbar/navbar";
+import ChatWindow  from "../components/chat/chatwindow";
+import ChatInput   from "../components/chat/chatinput";
 import { useAuthStore } from "../context/AuthStore"
 import { useChat } from "../context/ChatContext";
 

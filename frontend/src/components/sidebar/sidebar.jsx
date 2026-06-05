@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import ChatItem from "./ChatItem";
+import ChatItem from "./chatitem";
 import { FaPlus } from "react-icons/fa";
 
 // ─── Confirm Modal ────────────────────────────────────────────────────────────

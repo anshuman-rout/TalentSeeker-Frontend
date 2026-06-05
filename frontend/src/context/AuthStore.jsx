@@ -1,87 +1,60 @@
 import React, {
-    createContext,
-    useContext,
-    useEffect,
-    useState,
+  createContext,
+  useContext,
+  useEffect,
+  useState,
 } from "react";
 
-import { useNavigate } from "react-router"
+import { useNavigate } from "react-router";
+import { useCookies } from "react-cookie";
+import { saveTokens, clearTokens } from "../services/api";
 
-const AuthContext = createContext()
+const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
 
-    const navigate = useNavigate()
+  const navigate   = useNavigate();
+  const [cookies]  = useCookies(["access_token"]);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // ── Login ─────────────────────────────────────────────────────────────────
 
-    // Login
-    const handleLogin = async (data) => {
-        console.log("login", data)
-        try {
-            // Save Tokens
-            localStorage.setItem(
-                "access_token",
-                data.access_token
-            );
+  const handleLogin = (data) => {
+    saveTokens({
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+    });
+    setIsLoggedIn(true);
+    navigate("/", { replace: true });
+  };
 
+  // ── Logout ────────────────────────────────────────────────────────────────
 
-            localStorage.setItem(
-                "refresh_token",
-                data.refresh_token
-            );
-            setIsLoggedIn(true);
-        } catch (err) {
-            console.error(err, "cannot store login credentials")
-        }
+  const handleLogout = () => {
+    clearTokens();
+    setIsLoggedIn(false);
+    navigate("/login", { replace: true });
+  };
 
-    };
-    // Logout
-    const handleLogout = () => {
-        console.log("log out")
-        // Remove Tokens
-        localStorage.removeItem(
-            "access_token"
-        );
+  // ── Mount check ───────────────────────────────────────────────────────────
+  // useCookies keeps cookies.access_token in sync with the actual cookie.
+  // If the cookie has expired the browser deletes it and cookies.access_token
+  // becomes undefined — so this correctly redirects to login on expiry.
 
-        localStorage.removeItem(
-            "refresh_token"
-        );
-        // Logout User
-        setIsLoggedIn(false);
-    };
+  useEffect(() => {
+    if (cookies.access_token) {
+      setIsLoggedIn(true);
+      navigate("/", { replace: true });
+    } else {
+      navigate("/login", { replace: true });
+    }
+  }, []);
 
-    useEffect(() => {
-        console.log("render")
-        const token =
-            localStorage.getItem(
-                "access_token"
-            );
-
-        if (token){
-            setIsLoggedIn(true)
-            // to be improved
-            navigate("/",{ replace: true });
-        }else{
-            navigate("/login",{ replace: true });
-        }
-
-    }, [isLoggedIn]);
-    
-
-
-    // ── provider ──────────────────────────────────────────────────────────────
-    return (
-        <AuthContext.Provider
-            value={{
-                isLoggedIn,
-                handleLogin,
-                handleLogout
-            }}
-        >
-            {children}
-        </AuthContext.Provider>
-    );
+  return (
+    <AuthContext.Provider value={{ isLoggedIn, handleLogin, handleLogout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export const useAuthStore = () => useContext(AuthContext);

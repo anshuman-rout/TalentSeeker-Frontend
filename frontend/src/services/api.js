@@ -1,17 +1,46 @@
 import axios from "axios";
+import Cookies from "universal-cookie";
+import { jwtDecode } from "jwt-decode";
 
-const BASE_URL = "http://192.168.7.12:8001";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-const API = axios.create({
-  baseURL: BASE_URL,
-});
+const cookies = new Cookies();
+
+// Cookie options — add Secure: true when deployed over HTTPS
+const COOKIE_OPTIONS = {
+  path:     "/",
+  sameSite: "strict",
+  // secure: true,   // uncomment when on HTTPS
+};
+const getMaxAge = (token) => {
+  const decoded = jwtDecode(token);
+  const now = Math.floor(Date.now() / 1000);
+  return decoded.exp - now;
+};
+
+
+export const saveTokens = ({ access_token, refresh_token }) => {
+  cookies.set("access_token",  access_token,  { ...COOKIE_OPTIONS, maxAge: getMaxAge(access_token) });
+  cookies.set("refresh_token", refresh_token, { ...COOKIE_OPTIONS,  maxAge: getMaxAge(refresh_token) });
+};
+
+export const clearTokens = () => {
+  cookies.remove("access_token",  { path: "/" });
+  cookies.remove("refresh_token", { path: "/" });
+};
+
+export const getAccessToken  = () => cookies.get("access_token");
+export const getRefreshToken = () => cookies.get("refresh_token");
+
+// ─── Axios instance ───────────────────────────────────────────────────────────
+
+const API = axios.create({ baseURL: BASE_URL });
 
 // ── Request interceptor ───────────────────────────────────────────────────────
-// Attach the access token to every outgoing request.
 
 API.interceptors.request.use(
   (req) => {
-    const token = localStorage.getItem("access_token");
+    const token = getAccessToken();
     if (token) {
       req.headers.Authorization = `Bearer ${token}`;
     }
@@ -21,59 +50,41 @@ API.interceptors.request.use(
 );
 
 // ── Response interceptor ──────────────────────────────────────────────────────
-// On a 401:
-//   1. Try POST /api/v1/auth/refresh with the stored refresh token.
-//   2. If it succeeds → save the new access token and retry the original request.
-//   3. If it fails (refresh token also expired/invalid) → clear storage and
-//      redirect to /login so the user is forced to log in again.
-//
-// _retry flag prevents infinite loops: if the retried request 401s again we
-// don't attempt another refresh.
 
 API.interceptors.response.use(
   (response) => response,
 
   async (error) => {
     const originalRequest = error.config;
-
-    const is401 = error.response?.status === 401;
-    const alreadyRetried = originalRequest._retry;
+    const is401           = error.response?.status === 401;
+    const alreadyRetried  = originalRequest._retry;
 
     if (is401 && !alreadyRetried) {
       originalRequest._retry = true;
 
-      const refreshToken = localStorage.getItem("refresh_token");
+      const refreshToken = getRefreshToken();
 
       if (!refreshToken) {
-        // No refresh token at all — force logout
         clearTokensAndRedirect();
         return Promise.reject(error);
       }
 
       try {
-        // POST /api/v1/auth/refresh
-        // Using plain axios (not API) to avoid the interceptor triggering
-        // on this call itself and causing a loop.
         const { data } = await axios.post(
           `${BASE_URL}/api/v1/auth/refresh`,
           { refresh_token: refreshToken },
           { headers: { "Content-Type": "application/json" } }
         );
 
-        // Save the new access token
-        localStorage.setItem("access_token", data.access_token);
+        saveTokens({
+          access_token:  data.access_token,
+          refresh_token: data.refresh_token,
+        });
 
-        // If the server also returns a new refresh token, rotate it
-        if (data.refresh_token) {
-          localStorage.setItem("refresh_token", data.refresh_token);
-        }
-
-        // Retry the original request with the new token
         originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
         return API(originalRequest);
 
       } catch (refreshError) {
-        // Refresh token is expired or invalid — force logout
         clearTokensAndRedirect();
         return Promise.reject(refreshError);
       }
@@ -83,11 +94,8 @@ API.interceptors.response.use(
   }
 );
 
-// Clears localStorage and redirects to login without importing useNavigate
-// (interceptors live outside React, so we use window.location directly).
 const clearTokensAndRedirect = () => {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
+  clearTokens();
   window.location.href = "/login";
 };
 
