@@ -53,19 +53,7 @@ const Login = () => {
       );
 
       console.log(data);
-
-      // // Save Tokens
-      // localStorage.setItem(
-      //   "access_token",
-      //   data.access_token
-      // );
-
-      // localStorage.setItem(
-      //   "refresh_token",
-      //   data.refresh_token
-      // );
-
-      // Login Success
+      
       await handleLogin(data);
 
     } catch (error) {

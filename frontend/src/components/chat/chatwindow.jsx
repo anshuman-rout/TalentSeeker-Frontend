@@ -1,7 +1,34 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useChat } from "../../context/ChatContext";
+import { getAccessToken } from "../../services/api";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+
+const ConfirmModal = ({ title, message, confirmLabel, onConfirm, onCancel }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-2xl p-6 w-[340px] shadow-2xl">
+      <h2 className="text-white font-semibold text-lg mb-2">{title}</h2>
+      <p className="text-gray-400 text-sm mb-6">{message}</p>
+      <div className="flex gap-3">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-2.5 rounded-xl bg-[#2a2a2a] hover:bg-[#333] text-white text-sm transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className="flex-1 py-2.5 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-semibold transition-colors"
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </div>
+  </div>
+);
 
 // ─── Tag Pill ─────────────────────────────────────────────────────────────────
 // Used to render each item in skills / experience / education / projects arrays.
@@ -12,6 +39,58 @@ const TagPill = ({ text }) => (
   </span>
 );
 
+// ─── Pagination Controls ──────────────────────────────────────────────────────
+
+const Pagination = ({ msg, chatId }) => {
+  const { updateMessagePage, deriveCurrentPage } = useChat();
+
+  if ((msg.total_pages ?? 1) <= 1) return null;
+
+  const isPrevDisabled = !msg.has_prev || msg.pageLoading;
+  const isNextDisabled = !msg.has_next || msg.pageLoading;
+  // currentPage is always derived — never stored as state
+  const currentPage = deriveCurrentPage(msg.offset, msg.limit);
+
+  return (
+    <div className="flex items-center justify-center gap-3 mt-4 pt-3 border-t border-[#333]">
+      <button
+        disabled={isPrevDisabled}
+        onClick={() => updateMessagePage(chatId, msg.messageId, "prev")}
+        className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${isPrevDisabled
+            ? "opacity-30 cursor-not-allowed text-gray-500 bg-[#222]"
+            : "text-white bg-[#2a2a2a] hover:bg-[#3a3a3a]"
+          }`}
+      >
+        ‹ Prev
+      </button>
+
+      <span className="text-gray-400 text-sm">
+        {msg.pageLoading
+          ? (
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+            </span>
+          )
+          : <><span className="text-white font-medium">{currentPage}</span> / {msg.total_pages}</>
+        }
+      </span>
+
+      <button
+        disabled={isNextDisabled}
+        onClick={() => updateMessagePage(chatId, msg.messageId, "next")}
+        className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${isNextDisabled
+            ? "opacity-30 cursor-not-allowed text-gray-500 bg-[#222]"
+            : "text-white bg-[#2a2a2a] hover:bg-[#3a3a3a]"
+          }`}
+      >
+        Next ›
+      </button>
+    </div>
+  );
+};
+
 // ─── Compare Result ───────────────────────────────────────────────────────────
 // New response shape — no scores, arrays for skills/experience/education/projects.
 // Layout: one row per candidate, columns = Candidate | Skills | Experience | Education | Projects | Summary
@@ -20,11 +99,11 @@ const CompareResult = ({ result }) => {
   const { role_context, candidates = [], verdict } = result;
 
   const columns = [
-    { key: "skills",     label: "Skills"     },
+    { key: "skills", label: "Skills" },
     { key: "experience", label: "Experience" },
-    { key: "education",  label: "Education"  },
-    { key: "projects",   label: "Projects"   },
-    { key: "summary",    label: "Summary"    },
+    { key: "education", label: "Education" },
+    { key: "projects", label: "Projects" },
+    { key: "summary", label: "Summary" },
   ];
 
   // Identify strongest candidate by counting their name appearing in the verdict.
@@ -43,9 +122,17 @@ const CompareResult = ({ result }) => {
   return (
     <div className="space-y-5 w-full">
 
+      {/* AI Verdict */}
+      {verdict && (
+        <div className="flex gap-3 bg-green-950/40 border border-green-800 rounded-xl px-4 py-3">
+          <span className="text-green-400 text-base mt-0.5 shrink-0">🏆</span>
+          <p className="text-10px font-serif text-green-200 leading-relaxed">{verdict}</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs uppercase tracking-widest text-gray-500">Comparison</span>
+        <span className="text-xs uppercase tracking-widest text-gray-300">Comparison</span>
         {role_context && (
           <span className="text-xs bg-[#1e1e1e] border border-[#333] text-gray-300 px-2 py-0.5 rounded-full">
             {role_context}
@@ -60,11 +147,11 @@ const CompareResult = ({ result }) => {
           {/* Column headers */}
           <thead>
             <tr className="bg-[#161616] border-b border-[#2a2a2a]">
-              <th className="text-left px-4 py-3 text-gray-400 font-medium whitespace-nowrap w-[160px]">
+              <th className="text-left px-4 py-3 text-gray-200 font-medium whitespace-nowrap w-[160px]">
                 Candidate
               </th>
               {columns.map(({ label }) => (
-                <th key={label} className="text-left px-4 py-3 text-gray-400 font-medium whitespace-nowrap">
+                <th key={label} className="text-left px-4 py-3 text-gray-200 font-medium whitespace-nowrap">
                   {label}
                 </th>
               ))}
@@ -78,22 +165,20 @@ const CompareResult = ({ result }) => {
               return (
                 <tr
                   key={i}
-                  className={`border-b border-[#2a2a2a] align-top transition-colors ${
-                    isStrongest ? "bg-green-950/20" : "hover:bg-[#1a1a1a]"
-                  }`}
+                  className={`border-b border-[#2a2a2a] align-top transition-colors ${isStrongest ? "bg-green-950/20" : "hover:bg-[#1a1a1a]"
+                    }`}
                 >
                   {/* Candidate name */}
                   <td className="px-4 py-4 w-[160px]">
                     <div className="flex flex-col gap-1">
                       {isStrongest && (
                         <span className="text-[10px] bg-green-800 text-green-200 px-2 py-0.5 rounded-full w-fit whitespace-nowrap">
-                          🏆 Strongest
+                          Strongest
                         </span>
                       )}
                       <span
-                        className={`text-xs font-semibold leading-snug break-all ${
-                          isStrongest ? "text-green-300" : "text-white"
-                        }`}
+                        className={`text-xs font-semibold leading-snug break-all ${isStrongest ? "text-green-300" : "text-white"
+                          }`}
                         title={c.file_name}
                       >
                         {c.file_name}
@@ -103,9 +188,13 @@ const CompareResult = ({ result }) => {
 
                   {/* Skills */}
                   <td className="px-4 py-4 max-w-[180px]">
-                    <div className="flex flex-wrap">
-                      {(c.skills || []).map((s, j) => <TagPill key={j} text={s} />)}
-                    </div>
+                    <ul className="space-y-1">
+                      {(c.skills || []).map((e, j) => (
+                        <li key={j} className="text-xs text-gray-300 leading-relaxed">
+                          • {e}
+                        </li>
+                      ))}
+                    </ul>
                   </td>
 
                   {/* Experience */}
@@ -131,10 +220,14 @@ const CompareResult = ({ result }) => {
                   </td>
 
                   {/* Projects */}
-                  <td className="px-4 py-4 max-w-[180px]">
-                    <div className="flex flex-wrap">
-                      {(c.projects || []).map((p, j) => <TagPill key={j} text={p} />)}
-                    </div>
+                  <td className="px-4 py-4 max-w-[200px]">
+                    <ul className="space-y-1">
+                      {(c.projects || []).map((e, j) => (
+                        <li key={j} className="text-xs text-gray-300 leading-relaxed">
+                          • {e}
+                        </li>
+                      ))}
+                    </ul>
                   </td>
 
                   {/* Summary */}
@@ -148,13 +241,6 @@ const CompareResult = ({ result }) => {
         </table>
       </div>
 
-      {/* AI Verdict */}
-      {verdict && (
-        <div className="flex gap-3 bg-green-950/40 border border-green-800 rounded-xl px-4 py-3">
-          <span className="text-green-400 text-base mt-0.5 shrink-0">🏆</span>
-          <p className="text-sm text-green-200 leading-relaxed">{verdict}</p>
-        </div>
-      )}
     </div>
   );
 };
@@ -172,10 +258,14 @@ const ChatWindow = ({ messages, currentChat }) => {
   } = useChat();
 
   const bottomRef = useRef(null);
+  const [pendingBulkUrl, setPendingBulkUrl] = useState(null);
 
+  // Only scroll to bottom when a new message is added (count increases).
+  // Pagination updates mutate an existing message's content — not the count —
+  // so they correctly do NOT trigger this scroll.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages.length]);
 
   // ── no chat selected ──────────────────────────────────────────────────────
   if (!currentChat) {
@@ -236,29 +326,72 @@ const ChatWindow = ({ messages, currentChat }) => {
             );
           }
 
-          return (
-            <div key={index} className="mb-6 flex justify-start">
-              <div className="w-full max-w-[90%] px-5 py-4 rounded-2xl bg-[#181818]">
+          // ── AI bubble ─────────────────────────────────────────────────────
 
-                {/* Searching spinner */}
-                {msg.text === "Searching…" && (!msg.candidates || msg.candidates.length === 0) && (
+          // Chatbot mode: total === 0 and no candidates → plain conversational reply
+          const isChatbotMode = (msg.total === 0) && (!msg.candidates || msg.candidates.length === 0);
+
+          // Searching spinner (optimistic temp message)
+          if (msg.text === "Searching…") {
+            return (
+              <div key={index} className="mb-6 flex justify-start">
+                <div className="w-full max-w-[90%] px-5 py-4 rounded-2xl bg-[#1b1c1c] ">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]" />
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]" />
                   </div>
+                </div>
+              </div>
+            );
+          }
+
+          // Plain chatbot reply — no cards, no pagination
+          if (isChatbotMode) {
+            return (
+              <div key={index} className="mb-6 flex justify-start">
+                <div className="w-full max-w-[90%] px-5 py-4 rounded-2xl bg-[#1b1c1c] ">
+                  <p className="text-gray-200 text-10px mt font-serif ">{msg.text}</p>
+                </div>
+              </div>
+            );
+          }
+
+          // Normal search result with candidates + pagination
+          return (
+            <div key={index} className="mb-6 flex justify-start">
+              <div className="w-full max-w-[90%] px-5 py-4 rounded-2xl bg-[#1b1c1c] ">
+
+                {/* reason_for_search + bulk download link on the same row */}
+                {msg.text && msg.text !== "Searching…" && (
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <p className="text-gray-200 text-10px mt font-serif ">{msg.text}</p>
+                    {msg.bulk_download_url && (
+                      <button
+                        onClick={() => {
+                          const accessToken = getAccessToken();
+                          const downloadUrl =
+                            `${BASE_URL}${msg.bulk_download_url}&access_token=${encodeURIComponent(accessToken)}`;
+                          setPendingBulkUrl(downloadUrl);
+                        }}
+                        className="text-green-400 hover:underline text-sm whitespace-nowrap shrink-0"
+                      >
+                        ⬇ Download All
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 {/* Candidate cards */}
                 {msg.candidates && msg.candidates.length > 0 && (
-                  <div className="space-y-3">
+                  <div className="space-y-3 mt-4">
                     {msg.candidates.map((candidate, idx) => {
                       const isSelected = selectedPaths.includes(candidate.local_file_path);
                       const atMax = selectedPaths.length >= 5 && !isSelected;
                       return (
                         <div
                           key={idx}
-                          onClick={() => !atMax && toggleCandidate(candidate.local_file_path)}
+                          onClick={() => !atMax && !msg.pageLoading && toggleCandidate(candidate.local_file_path)}
                           className={`
                             relative border rounded-xl p-4 transition-all cursor-pointer select-none
                             ${isSelected
@@ -299,7 +432,7 @@ const ChatWindow = ({ messages, currentChat }) => {
                             </a>
                             <a
                               href={`${BASE_URL}${candidate.cv_download_url}`}
-                              target="_blank" rel="noreferrer"
+                              rel="noreferrer"
                               className="text-green-400 hover:underline text-sm"
                             >
                               Download
@@ -311,19 +444,33 @@ const ChatWindow = ({ messages, currentChat }) => {
                   </div>
                 )}
 
-                {/* reason_for_search */}
-                {msg.text && msg.text !== "Searching…" && (
-                  <p className="text-gray-400 text-sm mt-4 italic">{msg.text}</p>
-                )}
+                {/* Pagination controls */}
+                <Pagination
+                  msg={msg}
+                  chatId={currentChat.id}
+                />
+
               </div>
             </div>
           );
         })}
 
-
-
         <div ref={bottomRef} />
       </div>
+
+      {/* Bulk download confirmation modal */}
+      {pendingBulkUrl && (
+        <ConfirmModal
+          title="Download all CVs?"
+          message="This will download all matching CVs for this search as a ZIP file."
+          confirmLabel="Download"
+          onConfirm={() => {
+            window.open(pendingBulkUrl, "_blank",);
+            setPendingBulkUrl(null);
+          }}
+          onCancel={() => setPendingBulkUrl(null)}
+        />
+      )}
 
       {/* Floating compare bar */}
       {selectedPaths.length >= 2 && (

@@ -5,6 +5,8 @@ export const searchCandidates =
     query,
     context_id,
     reset_context = false,
+    limit=10,
+    offset=0,
   }) => {
 
     const response = await API.post(
@@ -13,6 +15,8 @@ export const searchCandidates =
         query,
         context_id,
         reset_context,
+        limit,
+        offset,
       }
     );
 

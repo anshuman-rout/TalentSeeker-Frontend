@@ -4,12 +4,9 @@ import React, {
   useState,
 } from "react";
 
-const UploadContext =
-  createContext();
+const UploadContext = createContext();
 
-export const UploadProvider = ({
-  children,
-}) => {
+export const UploadProvider = ({ children,}) => {
 
   const [selectedFiles,
     setSelectedFiles] =

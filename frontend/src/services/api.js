@@ -22,6 +22,10 @@ const getMaxAge = (token) => {
 export const saveTokens = ({ access_token, refresh_token }) => {
   cookies.set("access_token",  access_token,  { ...COOKIE_OPTIONS, maxAge: getMaxAge(access_token) });
   cookies.set("refresh_token", refresh_token, { ...COOKIE_OPTIONS,  maxAge: getMaxAge(refresh_token) });
+
+  // document.cookie = `access_token=${access_token}; ${COOKIE_OPTIONS.path} ; ${COOKIE_OPTIONS.sameSite} ; maxAge: ${getMaxAge(access_token)}`;
+  // document.cookie = `access_token=${refresh_token}; ${COOKIE_OPTIONS.path} ; ${COOKIE_OPTIONS.sameSite} ; maxAge: ${getMaxAge(refresh_token)}`;
+  // console.log("saved")
 };
 
 export const clearTokens = () => {
@@ -34,7 +38,9 @@ export const getRefreshToken = () => cookies.get("refresh_token");
 
 // ─── Axios instance ───────────────────────────────────────────────────────────
 
-const API = axios.create({ baseURL: BASE_URL });
+const API = axios.create({ baseURL: BASE_URL }); 
+
+
 
 // ── Request interceptor ───────────────────────────────────────────────────────
 

@@ -10,52 +10,101 @@ import { getAllContexts, deleteContext, compareCandidates } from "../services/co
 
 const ChatContext = createContext();
 
+// ─── Single source of truth for page size ────────────────────────────────────
+// Change this one constant if the backend default ever changes.
+const DEFAULT_LIMIT = 5;
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-// Detect whether a history item is a compare result or a regular search.
-// Compare items have query starting with "Shortlisted comparison:" and
-// response.candidates (array of objects with skills/experience/etc.)
 const isCompareItem = (item) =>
   item.query?.startsWith("Shortlisted comparison:") &&
   Array.isArray(item.response?.candidates);
 
-const buildMessages = (historyItems = []) =>
+// currentPage is a derived value — always Math.floor(offset / limit) + 1.
+// It is never stored as state; it is computed wherever needed.
+const deriveCurrentPage = (offset, limit) =>
+  Math.floor((offset ?? 0) / (limit ?? DEFAULT_LIMIT)) + 1;
+
+// contextId is passed in from buildChats so every ai message always has
+// the correct context_id, even when rebuilt from history after a page refresh.
+const buildMessages = (historyItems = [], contextId) =>
   historyItems.map((item) => {
     if (isCompareItem(item)) {
-      // Compare message — sender "compare", carries the full result object
-      return {
-        sender: "compare",
-        compareResult: item.response,
-      };
+      // Compare messages are never paginated — no query/context_id needed.
+      return { sender: "compare", compareResult: item.response };
     }
-    // Regular search message — split into user + ai pair
+    const r = item.response;
+    const limit = r.limit ?? DEFAULT_LIMIT;
+    const offset = r.offset ?? 0;
+    const allCandidates = r.matching_candidates || [];
+    const visibleCandidates = allCandidates.length > limit? allCandidates.slice(offset, offset + limit): allCandidates;
     return [
       { sender: "user", text: item.query },
       {
         sender: "ai",
-        text: item.response.reason_for_search,
-        candidates: item.response.matching_candidates || [],
+        messageId: crypto.randomUUID(),   // stable ID for targeting updates
+        text: r.reason_for_search,
+        query: item.query,
+        context_id: contextId,             // always set — never null
+        total: r.total ?? 0,
+        limit,
+        offset,
+        total_pages: r.total_pages ?? 1,
+        has_next: r.has_next ?? false,
+        has_prev: r.has_prev ?? false,
+        next_offset: r.next_offset ?? null,
+        prev_offset: r.prev_offset ?? null,
+        bulk_download_url: r.bulk_download_url ?? null,
+        pageLoading: false,
+        candidates: visibleCandidates,
       },
     ];
   }).flat();
+
+// Deduplicate history items before building messages.
+// When the user clicks Next/Previous, POST /api/v1/search is called each time
+// and the backend records every paginated call as a new history entry.
+// On refresh this produces duplicate user+ai bubbles for the same query.
+//
+// Fix: for each run of consecutive identical queries, keep only the LAST one
+// (the most recently viewed page). Compare items are always kept as-is.
+const deduplicateItems = (items) => {
+  const result = [];
+  for (let i = 0; i < items.length; i++) {
+    const current = items[i];
+    // Always keep compare messages.
+    if (isCompareItem(current)) {
+      result.push(current);
+      continue;
+    }
+    // Only deduplicate against the IMMEDIATELY NEXT search.
+    // Stop as soon as we hit a compare message.
+    const next = items[i + 1];
+    if (
+      next &&
+      !isCompareItem(next) &&
+      next.query === current.query
+    ) {
+      // Consecutive duplicate search (pagination)
+      continue;
+    }
+    result.push(current);
+  }
+  return result;
+};
 
 const buildChats = (contextsObj = {}) =>
   Object.entries(contextsObj)
     .filter(([, items]) => Array.isArray(items) && items.length > 0)
     .map(([contextId, items]) => {
-
-      const firstSearchItem =
-        items.find((i) => !isCompareItem(i));
-
+      const dedupedItems = deduplicateItems(items);
+      const firstSearchItem = dedupedItems.find((i) => !isCompareItem(i));
       return {
         id: `backend-${contextId}`,
         context_id: contextId,
         title: firstSearchItem?.query || contextId,
-        messages: buildMessages(items),
-        updated_at:
-          items[items.length - 1]?.created_at ||
-          items[items.length - 1]?.updated_at ||
-          "",
+        messages: buildMessages(dedupedItems, contextId),
+        updated_at: items[items.length - 1]?.created_at || items[items.length - 1]?.updated_at || "",
       };
     })
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
@@ -72,7 +121,6 @@ export const ChatProvider = ({ children }) => {
   const [comparing, setComparing] = useState(false);
 
   // ── fetch ─────────────────────────────────────────────────────────────────
-  // GET /api/v1/search/contexts — returns both search and compare history
 
   const fetchChats = async () => {
     try {
@@ -80,17 +128,10 @@ export const ChatProvider = ({ children }) => {
       const validChats = buildChats(data);
       setChats(validChats);
       const savedChatId = localStorage.getItem("active_chat_id");
-      if (savedChatId === "__NEW_CHAT__") 
-      {
-        setCurrentChatId(null);
-        return validChats;
-      }
+      if (savedChatId === "__NEW_CHAT__") { setCurrentChatId(null); return validChats; }
       const exists = validChats.find((chat) => chat.id === savedChatId);
-      if (exists) {
-        setCurrentChatId(savedChatId);
-      } else if (validChats.length > 0) {
-        setCurrentChatId(validChats[0].id);
-      }
+      if (exists) setCurrentChatId(savedChatId);
+      else if (validChats.length) setCurrentChatId(validChats[0].id);
       return validChats;
     } catch (err) {
       console.error("fetchChats error:", err);
@@ -100,14 +141,9 @@ export const ChatProvider = ({ children }) => {
 
   useEffect(() => { fetchChats(); }, []);
 
-  // ── derived ───────────────────────────────────────────────────────────────
-
   const currentChat = chats.find((c) => c.id === currentChatId) || null;
 
-  // Compare messages already live inside currentChat.messages as
-  // { sender: "compare", compareResult: {...} } entries — no separate state needed.
-
-  // ── chat navigation ───────────────────────────────────────────────────────
+  // ── navigation ────────────────────────────────────────────────────────────
 
   const createNewChat = () => {
     setCurrentChatId(null);
@@ -126,15 +162,13 @@ export const ChatProvider = ({ children }) => {
     setSelectedPaths([]);
   };
 
-  // ── delete chat ───────────────────────────────────────────────────────────
+  // ── delete ────────────────────────────────────────────────────────────────
 
   const deleteChat = async (id) => {
     const chat = chats.find((c) => c.id === id);
     if (!chat) return;
-
     try { await deleteContext(chat.context_id); }
     catch (err) { console.error("deleteContext error:", err); }
-
     const remaining = chats.filter((c) => c.id !== id);
     setChats(remaining);
     setCurrentChatId(remaining.length > 0 ? remaining[0].id : null);
@@ -153,52 +187,97 @@ export const ChatProvider = ({ children }) => {
 
   const clearSelection = () => setSelectedPaths([]);
 
-  // ── compare ───────────────────────────────────────────────────────────────
-  // POST /api/v1/search/compare
-  // After a successful compare, re-fetch contexts — the backend now includes
-  // the compare result as a new history item inside the same context.
+  // ── helper: update one ai message by its stable messageId ─────────────────
 
-  const compareSelected = async () => {
-    if (!currentChat || selectedPaths.length < 2) return;
-
-    setComparing(true);
-
-    // Optimistic compare bubble while waiting for backend
-    const tempMsg = { sender: "compare", compareResult: null };
+  const updateMessageById = (chatId, messageId, updater) =>
     setChats((prev) =>
       prev.map((c) =>
-        c.id === currentChat.id
-          ? { ...c, messages: [...c.messages, tempMsg] }
-          : c
+        c.id !== chatId ? c : {
+          ...c,
+          messages: c.messages.map((m) =>
+            m.messageId === messageId ? updater(m) : m
+          ),
+        }
       )
     );
 
+  // ── compare ───────────────────────────────────────────────────────────────
+
+  const compareSelected = async () => {
+    if (!currentChat || selectedPaths.length < 2) return;
+    setComparing(true);
+    const tempMsg = { sender: "compare", compareResult: null };
+    setChats((prev) => prev.map((c) =>
+      c.id === currentChat.id ? { ...c, messages: [...c.messages, tempMsg] } : c
+    ));
     try {
       await compareCandidates({
         context_id: currentChat.context_id,
         candidate_paths: selectedPaths,
       });
-
-      // Re-fetch — backend now has the compare result in context history
       const freshChats = await fetchChats();
       const activeChat = freshChats.find((c) => c.context_id === currentChat.context_id);
       if (activeChat) setCurrentChatId(activeChat.id);
-
       setSelectedPaths([]);
-
     } catch (err) {
       console.error("compare error:", err);
-      // Remove optimistic bubble on failure
-      setChats((prev) =>
-        prev.map((c) =>
-          c.id === currentChat.id
-            ? { ...c, messages: c.messages.filter((m) => m !== tempMsg) }
-            : c
-        )
-      );
+      setChats((prev) => prev.map((c) =>
+        c.id === currentChat.id
+          ? { ...c, messages: c.messages.filter((m) => m !== tempMsg) }
+          : c
+      ));
       alert("Comparison failed. Please try again.");
     } finally {
       setComparing(false);
+    }
+  };
+
+  // ── pagination ────────────────────────────────────────────────────────────
+  // Targets the ai message by stable messageId — not array index.
+  // Uses backend-provided next_offset / prev_offset directly.
+
+  const updateMessagePage = async (chatId, messageId, direction) => {
+    const chat = chats.find((c) => c.id === chatId);
+    if (!chat) return;
+    const msg = chat.messages.find((m) => m.messageId === messageId);
+    if (!msg || msg.sender !== "ai") return;
+
+    const newOffset = direction === "next" ? msg.next_offset : msg.prev_offset;
+    if (newOffset === null || newOffset === undefined) return;
+
+    // Mark this message as loading
+    updateMessageById(chatId, messageId, (m) => ({ ...m, pageLoading: true }));
+
+    try {
+      const result = await searchCandidates({
+        query: msg.query,
+        context_id: msg.context_id,
+        reset_context: false,
+        limit: msg.limit,
+        offset: newOffset,
+      });
+
+      const limit = result.limit ?? msg.limit;
+      const offset = result.offset ?? newOffset;
+
+      updateMessageById(chatId, messageId, (m) => ({
+        ...m,
+        candidates: result.matching_candidates || [],
+        total: result.total ?? m.total,
+        limit,
+        offset,
+        total_pages: result.total_pages ?? m.total_pages,
+        has_next: result.has_next ?? false,
+        has_prev: result.has_prev ?? false,
+        next_offset: result.next_offset ?? null,
+        prev_offset: result.prev_offset ?? null,
+        bulk_download_url: result.bulk_download_url ?? null,
+        pageLoading: false,
+        // currentPage is derived — not stored
+      }));
+    } catch (err) {
+      console.error("pagination error:", err);
+      updateMessageById(chatId, messageId, (m) => ({ ...m, pageLoading: false }));
     }
   };
 
@@ -211,8 +290,28 @@ export const ChatProvider = ({ children }) => {
     setLoading(true);
     setSelectedPaths([]);
 
+    // Stable ID used to target this exact message for the in-place update below.
+    const aiMessageId = crypto.randomUUID();
+
     const tempUserMsg = { sender: "user", text };
-    const tempAiMsg = { sender: "ai", text: "Searching…", candidates: [] };
+    const tempAiMsg = {
+      sender: "ai",
+      messageId: aiMessageId,
+      text: "Searching…",
+      query: text,
+      context_id: activeContextId,
+      total: 0,
+      limit: DEFAULT_LIMIT,
+      offset: 0,
+      total_pages: 1,
+      has_next: false,
+      has_prev: false,
+      next_offset: null,
+      prev_offset: null,
+      bulk_download_url: null,
+      pageLoading: false,
+      candidates: [],
+    };
 
     setChats((prev) => {
       const exists = prev.find((c) => c.context_id === activeContextId);
@@ -223,30 +322,45 @@ export const ChatProvider = ({ children }) => {
             : c
         );
       }
-      return [
-        {
-          id: `backend-${activeContextId}`,
-          context_id: activeContextId,
-          title: text,
-          messages: [tempUserMsg, tempAiMsg],
-        },
-        ...prev,
-      ];
+      return [{
+        id: `backend-${activeContextId}`,
+        context_id: activeContextId,
+        title: text,
+        messages: [tempUserMsg, tempAiMsg],
+      }, ...prev];
     });
 
     setCurrentChatId(`backend-${activeContextId}`);
     localStorage.setItem("active_chat_id", `backend-${activeContextId}`);
 
     try {
-      await searchCandidates({
+      const result = await searchCandidates({
         query: text,
         context_id: activeContextId,
         reset_context: false,
+        limit: DEFAULT_LIMIT,
+        offset: 0,
       });
 
-      const freshChats = await fetchChats();
-      const activeChat = freshChats.find((c) => c.context_id === activeContextId);
-      if (activeChat) setCurrentChatId(activeChat.id);
+      const limit = result.limit ?? DEFAULT_LIMIT;
+      const offset = result.offset ?? 0;
+
+      // Update by stable messageId — not object reference, not array index.
+      updateMessageById(`backend-${activeContextId}`, aiMessageId, (m) => ({
+        ...m,
+        text: result.reason_for_search,
+        total: result.total ?? 0,
+        limit,
+        offset,
+        total_pages: result.total_pages ?? 1,
+        has_next: result.has_next ?? false,
+        has_prev: result.has_prev ?? false,
+        next_offset: result.next_offset ?? null,
+        prev_offset: result.prev_offset ?? null,
+        bulk_download_url: result.bulk_download_url ?? null,
+        candidates: result.matching_candidates || [],
+        // currentPage is derived — not stored
+      }));
 
     } catch (err) {
       console.error("sendMessage error:", err);
@@ -268,24 +382,14 @@ export const ChatProvider = ({ children }) => {
   // ── provider ──────────────────────────────────────────────────────────────
 
   return (
-    <ChatContext.Provider
-      value={{
-        chats,
-        currentChat,
-        currentChatId,
-        loading,
-        selectChat,
-        createNewChat,
-        deleteChat,
-        sendMessage,
-        clearChat,
-        selectedPaths,
-        toggleCandidate,
-        clearSelection,
-        compareSelected,
-        comparing,
-      }}
-    >
+    <ChatContext.Provider value={{
+      chats, currentChat, currentChatId, loading,
+      selectChat, createNewChat, deleteChat, sendMessage, clearChat,
+      selectedPaths, toggleCandidate, clearSelection, compareSelected, comparing,
+      updateMessagePage,
+      DEFAULT_LIMIT,
+      deriveCurrentPage,
+    }}>
       {children}
     </ChatContext.Provider>
   );
